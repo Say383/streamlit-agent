@@ -1,36 +1,56 @@
-from langchain.agents import initialize_agent, AgentType
+from langchain.agents import ZeroShotAgent, AgentExecutor
 from langchain.callbacks import StreamlitCallbackHandler
-from langchain.chat_models import ChatOpenAI
+from langchain import OpenAI, LLMChain
+from langchain.schema import AIMessage
 from langchain.tools import DuckDuckGoSearchRun
 import streamlit as st
+from streamlit_memory import StreamlitMemory
 
 st.set_page_config(page_title="LangChain: Chat with search", page_icon="🦜")
 st.title("🦜 LangChain: Chat with search")
 
-openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
-if "messages" not in st.session_state:
-    st.session_state["messages"] = [{"role": "assistant", "content": "How can I help you?"}]
+prefix = """Have a conversation with a human, answering the following questions as best you can. You have access to the following tools:"""
+suffix = """Begin!
 
-for msg in st.session_state.messages:
-    st.chat_message(msg["role"]).write(msg["content"])
+{chat_history}
+Question: {input}
+{agent_scratchpad}"""
+tools = [DuckDuckGoSearchRun(name="Search")]
+
+prompt_tpl = ZeroShotAgent.create_prompt(
+    tools=tools,
+    prefix=prefix,
+    suffix=suffix,
+    input_variables=["input", "chat_history", "agent_scratchpad"],
+)
+memory = StreamlitMemory()
+
+openai_api_key = st.sidebar.text_input("OpenAI API Key", type="password")
+if len(memory.messages) == 0 or st.sidebar.button("Reset chat history"):
+    memory.clear()
+    memory.add_message(AIMessage(content="How can I help you?"))
+
+for msg in memory.messages:
+    st.chat_message(msg.type).write(msg.content)
 
 if prompt := st.chat_input(placeholder="Who won the Women's U.S. Open in 2018?"):
-    st.session_state.messages.append({"role": "user", "content": prompt})
-    st.chat_message("user").write(prompt)
+    st.chat_message("human").write(prompt)
 
     if not openai_api_key:
         st.info("Please add your OpenAI API key to continue.")
         st.stop()
 
-    llm = ChatOpenAI(model_name="gpt-3.5-turbo", openai_api_key=openai_api_key, streaming=True)
-    search_agent = initialize_agent(
-        tools=[DuckDuckGoSearchRun(name="Search")],
-        llm=llm,
-        agent=AgentType.ZERO_SHOT_REACT_DESCRIPTION,
+    llm = OpenAI(openai_api_key=openai_api_key, streaming=True)
+    llm_chain = LLMChain(llm=llm, prompt=prompt_tpl)
+    agent = ZeroShotAgent(llm_chain=llm_chain, tools=tools)
+    search_agent = AgentExecutor.from_agent_and_tools(
+        agent=agent,
+        tools=tools,
+        memory=memory,
         handle_parsing_errors=True,
     )
-    with st.chat_message("assistant"):
+
+    with st.chat_message("ai"):
         st_cb = StreamlitCallbackHandler(st.container(), expand_new_thoughts=False)
-        response = search_agent.run(st.session_state.messages, callbacks=[st_cb])
-        st.session_state.messages.append({"role": "assistant", "content": response})
+        response = search_agent.run(prompt, callbacks=[st_cb])
         st.write(response)
