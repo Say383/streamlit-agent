@@ -1,4 +1,4 @@
-from typing import Optional
+from typing import Optional, List
 import streamlit as st
 from langchain.memory import ConversationBufferMemory
 from langchain.memory.chat_message_histories import ChatMessageHistory
@@ -33,8 +33,10 @@ class StreamlitMemory(ConversationBufferMemory):
         )
 
     @property
-    def messages(self):
+    def messages(self) -> List[BaseMessage]:
         return self.chat_memory.messages
 
-    def add_message(self, msg: BaseMessage):
-        return self.chat_memory.add_message(msg)
+    def reset_messages(self, msgs: List[BaseMessage]) -> None:
+        self.clear()
+        for msg in msgs:
+            self.chat_memory.add_message(msg)
